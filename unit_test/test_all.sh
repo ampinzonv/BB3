@@ -15,6 +15,12 @@ test_files=(
     test_bb_get_list.sh
     test_bb_guess_sequence_type.sh
     test_bb_split_multiple_fasta.sh
+   
+    test_bb_blast_best_hit.sh
+    test_bb_create_blast_db.sh
+    test_bb_run_blast.sh
+    test_bb_blast_summary.sh
+    test_bb_blast_on_the_fly.sh
 )
 
 for test in "${test_files[@]}"; do
