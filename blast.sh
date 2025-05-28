@@ -125,132 +125,142 @@ bb_guess_db_type() {
 
 bb_run_blast() {
     if [[ $# -eq 0 ]]; then
-    echo "bb_run_blast"
-    echo "Run a BLAST search using a given query and database."
-    echo ""
-    echo "Usage:"
-    echo "  bb_run_blast --input FILE --db PREFIX --blast_type TYPE [--outfile FILE|DIR] [--strict] [--quiet] [--force]"
-    echo ""
-    echo "Options:"
-    echo "  --input FILE      Query file in FASTA format (required)"
-    echo "  --db PREFIX       BLAST database prefix (required)"
-    echo "  --blast_type TYPE One of: blastn, blastp, blastx, tblastn, tblastx (required)"
-    echo "  --outfile FILE    Output file or directory (default: ./<query>.blastout)"
-    echo "  --strict          Return error if no hits are found"
-    echo "  --quiet           Suppress messages"
-    echo "  --force           Overwrite output file if it exists"
-    echo ""
-    echo "Output format:"
-    echo "  Tabular format (BLAST outfmt 6) with the following columns:"
-    echo "    qseqid    sseqid    pident    length    mismatch    gapopen"
-    echo "    qstart    qend      sstart    send      evalue      bitscore"
-    echo "    qlen      slen"
-    echo ""
-    return 0
-fi
+        echo "bb_run_blast"
+        echo "Run a BLAST search using a given query and database."
+        echo ""
+        echo "Usage:"
+        echo "  bb_run_blast --input FILE --db PREFIX --blast_type TYPE [--outfile FILE|DIR] [--strict] [--quiet] [--force]"
+        echo ""
+        echo "Options:"
+        echo "  --input FILE      Query file in FASTA format (required)"
+        echo "  --db PREFIX       BLAST database prefix (required)"
+        echo "  --blast_type TYPE One of: blastn, blastp, blastx, tblastn, tblastx (required)"
+        echo "  --outfile FILE    Output file or directory (default: ./<query>.blastout)"
+        echo "  --processors      Number of processors to use (default: 1)"
+        echo "  --strict          Return error if no hits are found"
+        echo "  --quiet           Suppress messages"
+        echo "  --force           Overwrite output file if it exists"
+        echo ""
+        echo "Output format:"
+        echo "  Tabular format (BLAST outfmt 6) with the following columns:"
+        echo "    qseqid    sseqid    pident    length    mismatch    gapopen"
+        echo "    qstart    qend      sstart    send      evalue      bitscore"
+        echo "    qlen      slen"
+        echo ""
 
-
-    # Load BIOBASH core and file functions
-    if ! declare -f parse_args >/dev/null; then . ./biobash_core.sh; fi
-    if ! declare -f bb_guess_sequence_type >/dev/null; then . ./file.sh; fi
-    if ! declare -f bb_guess_db_type >/dev/null; then
-        error "Missing required function: bb_guess_db_type"
-        return 1
+        return 0
     fi
 
-    # Extra options
-    local DB=""
-    local BLAST_TYPE=""
-    local STRICT="false"
-    local FORMAT="6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qlen slen"
 
-    # Custom args
-    local args=()
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --db) DB="$2"; shift 2 ;;
-            --blast_type) BLAST_TYPE="$2"; shift 2 ;;
-            --strict) STRICT="true"; shift ;;
-            *) args+=("$1"); shift ;;
-        esac
-    done
-
-    parse_args "${args[@]}"
-
-    if [[ -z "$INPUT" || -z "$DB" || -z "$BLAST_TYPE" ]]; then
-        error "Missing required arguments: --input, --db, --blast_type"
-        return 1
-    fi
-
-    check_input "$INPUT"
-    check_dependencies "$BLAST_TYPE"
-
-    local SEQ_TYPE
-    SEQ_TYPE=$(bb_guess_sequence_type --input "$INPUT" --quiet 2>/dev/null)
-
-    local DB_TYPE
-    DB_TYPE=$(bb_guess_db_type "$DB")
-
-    info "Detected query type: $SEQ_TYPE"
-    info "Detected DB type: $DB_TYPE"
-
-    if [[ "$SEQ_TYPE" == "unknown" || "$DB_TYPE" == "unknown" ]]; then
-        error "Could not determine query or DB type"
-        return 1
-    fi
-
-    # Validate type combination
-    case "$BLAST_TYPE" in
-        blastn)   [[ "$SEQ_TYPE" == "DNA" && "$DB_TYPE" == "nucl" ]] || { error "blastn requires DNA vs nucl"; return 1; } ;;
-        blastp)   [[ "$SEQ_TYPE" == "Protein" && "$DB_TYPE" == "prot" ]] || { error "blastp requires Protein vs prot"; return 1; } ;;
-        blastx)   [[ "$SEQ_TYPE" == "DNA" && "$DB_TYPE" == "prot" ]] || { error "blastx requires DNA vs prot"; return 1; } ;;
-        tblastn)  [[ "$SEQ_TYPE" == "Protein" && "$DB_TYPE" == "nucl" ]] || { error "tblastn requires Protein vs nucl"; return 1; } ;;
-        tblastx)  [[ "$SEQ_TYPE" == "DNA" && "$DB_TYPE" == "nucl" ]] || { error "tblastx requires DNA vs nucl"; return 1; } ;;
-        *)        error "Unsupported blast_type: $BLAST_TYPE"; return 1 ;;
-    esac
-
-    local BASENAME
-    BASENAME=$(get_basename "$INPUT")
-    local OUTPUT_PATH=""
-
-    if [[ -z "$OUTFILE" ]]; then
-        OUTPUT_PATH="${BASENAME}.blastout"
-    elif [[ -d "$OUTFILE" ]]; then
-        OUTPUT_PATH="${OUTFILE%/}/${BASENAME}.blastout"
-    else
-        create_outdir "$(dirname "$OUTFILE")" || return 1
-        OUTPUT_PATH="$OUTFILE"
-    fi
-
-    if ! check_file_exists "$OUTPUT_PATH"; then
-        return 1
-    fi
-
-    info "Running $BLAST_TYPE"
-    info "Query: $INPUT"
-    info "Database: $DB"
-    info "Output: $OUTPUT_PATH"
-
-    "$BLAST_TYPE" -query "$INPUT" -db "$DB" -out "$OUTPUT_PATH" -outfmt "$FORMAT"
-    local status=$?
-
-    if [[ "$status" -ne 0 ]]; then
-        error "$BLAST_TYPE failed"
-        return 1
-    fi
-
-    # Handle empty output case
-    if [[ ! -s "$OUTPUT_PATH" || $(wc -l < "$OUTPUT_PATH") -eq 0 ]]; then
-        echo "blast: no hits found" > "$OUTPUT_PATH"
-        if [[ "$STRICT" == "true" ]]; then
-            warn "BLAST completed but returned no hits (strict mode active)"
+        # Load BIOBASH core and file functions
+        if ! declare -f parse_args >/dev/null; then . ./biobash_core.sh; fi
+        if ! declare -f bb_guess_sequence_type >/dev/null; then . ./file.sh; fi
+        if ! declare -f bb_guess_db_type >/dev/null; then
+            error "Missing required function: bb_guess_db_type"
             return 1
-        else
-            warn "BLAST completed but returned no hits"
         fi
-    else
-        info "BLAST completed successfully"
-    fi
+
+        # Extra options
+        local DB=""
+        local BLAST_TYPE=""
+        local STRICT="false"
+        local FORMAT="6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qlen slen"
+
+        # Custom args
+        local args=()
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --db) DB="$2"; shift 2 ;;
+                --blast_type) BLAST_TYPE="$2"; shift 2 ;;
+                --strict) STRICT="true"; shift ;;
+                --processors)
+                    args+=("$1" "$2")
+                    shift 2 ;;
+                *) args+=("$1"); shift ;;
+            esac
+        done
+
+
+        parse_args "${args[@]}"
+
+        if [[ -z "$INPUT" || -z "$DB" || -z "$BLAST_TYPE" ]]; then
+            error "Missing required arguments: --input, --db, --blast_type"
+            return 1
+        fi
+
+        check_input "$INPUT"
+        check_dependencies "$BLAST_TYPE"
+
+        local SEQ_TYPE
+        SEQ_TYPE=$(bb_guess_sequence_type --input "$INPUT" --quiet 2>/dev/null)
+
+        local DB_TYPE
+        DB_TYPE=$(bb_guess_db_type "$DB")
+
+        info "Detected query type: $SEQ_TYPE"
+        info "Detected DB type: $DB_TYPE"
+
+        if [[ "$SEQ_TYPE" == "unknown" || "$DB_TYPE" == "unknown" ]]; then
+            error "Could not determine query or DB type"
+            return 1
+        fi
+
+        # Validate type combination
+        case "$BLAST_TYPE" in
+            blastn)   [[ "$SEQ_TYPE" == "DNA" && "$DB_TYPE" == "nucl" ]] || { error "blastn requires DNA vs nucl"; return 1; } ;;
+            blastp)   [[ "$SEQ_TYPE" == "Protein" && "$DB_TYPE" == "prot" ]] || { error "blastp requires Protein vs prot"; return 1; } ;;
+            blastx)   [[ "$SEQ_TYPE" == "DNA" && "$DB_TYPE" == "prot" ]] || { error "blastx requires DNA vs prot"; return 1; } ;;
+            tblastn)  [[ "$SEQ_TYPE" == "Protein" && "$DB_TYPE" == "nucl" ]] || { error "tblastn requires Protein vs nucl"; return 1; } ;;
+            tblastx)  [[ "$SEQ_TYPE" == "DNA" && "$DB_TYPE" == "nucl" ]] || { error "tblastx requires DNA vs nucl"; return 1; } ;;
+            *)        error "Unsupported blast_type: $BLAST_TYPE"; return 1 ;;
+        esac
+
+        local BASENAME
+        BASENAME=$(get_basename "$INPUT")
+        local OUTPUT_PATH=""
+
+        if [[ -z "$OUTFILE" ]]; then
+            OUTPUT_PATH="${BASENAME}.blastout"
+        elif [[ -d "$OUTFILE" ]]; then
+            OUTPUT_PATH="${OUTFILE%/}/${BASENAME}.blastout"
+        else
+            create_outdir "$(dirname "$OUTFILE")" || return 1
+            OUTPUT_PATH="$OUTFILE"
+        fi
+
+        if ! check_file_exists "$OUTPUT_PATH"; then
+            return 1
+        fi
+
+        info "Running $BLAST_TYPE"
+        info "Query: $INPUT"
+        info "Database: $DB"
+        info "Output: $OUTPUT_PATH"
+
+        #
+        # Run the BLAST command
+        # 
+        #
+        "$BLAST_TYPE" -query "$INPUT" -db "$DB" -out "$OUTPUT_PATH" -outfmt "$FORMAT" -num_threads "$PROCESSORS" 
+        local status=$?
+
+        if [[ "$status" -ne 0 ]]; then
+            error "$BLAST_TYPE failed"
+            return 1
+        fi
+
+        # Handle empty output case
+        if [[ ! -s "$OUTPUT_PATH" || $(wc -l < "$OUTPUT_PATH") -eq 0 ]]; then
+            echo "blast: no hits found" > "$OUTPUT_PATH"
+            if [[ "$STRICT" == "true" ]]; then
+                warn "BLAST completed but returned no hits (strict mode active)"
+                return 1
+            else
+                warn "BLAST completed but returned no hits"
+            fi
+        else
+            info "BLAST completed successfully"
+        fi
 
     return 0
 }
@@ -486,6 +496,7 @@ bb_blast_on_the_fly() {
         echo "  --db FILE           Subject FASTA file (required)"
         echo "  --blast_type TYPE   One of: blastn, blastp, blastx, tblastn, tblastx (required)"
         echo "  --outfile FILE      Output file (default: query.blastout)"
+        echo "  --processors      Number of processors to use (default: 1)"
         echo "  --quiet             Suppress log messages"
         echo "  --force             Overwrite output file if it exists"
         return 0
@@ -513,9 +524,15 @@ bb_blast_on_the_fly() {
             --db) DB="$2"; shift 2 ;;
             --blast_type) BLAST_TYPE="$2"; shift 2 ;;
             --quiet) QUIET="true"; shift ;;
+            --processors)
+                args+=("$1" "$2")
+                shift 2 ;;
+            --force)
+                args+=("--force"); shift ;;
             *) args+=("$1"); shift ;;
         esac
     done
+
 
     parse_args "${args[@]}"
 
@@ -565,7 +582,7 @@ bb_blast_on_the_fly() {
     fi
 
     info "Running BLAST search"
-    if ! bb_run_blast --input "$QUERY" --db "$TMPDIR/tempdb" --blast_type "$BLAST_TYPE" --outfile "$TMPDIR"; then
+    if ! bb_run_blast --input "$QUERY" --db "$TMPDIR/tempdb" --blast_type "$BLAST_TYPE" --outfile "$TMPDIR" --processors "$PROCESSORS"; then
         error "BLAST execution failed"
         rm -rf "$TMPDIR"
         return 1
@@ -637,9 +654,13 @@ bb_reciprocal_blast() {
             --min_identity) MIN_IDENTITY="$2"; shift 2 ;;
             --min_coverage) MIN_COVERAGE="$2"; shift 2 ;;
             --outfile) OUT_PREFIX="$2"; shift 2 ;;
+            --processors)
+                args+=("$1" "$2")
+                shift 2 ;;
             *) args+=("$1"); shift ;;
         esac
     done
+
 
     parse_args "${args[@]}"
 
