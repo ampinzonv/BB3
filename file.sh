@@ -789,141 +789,6 @@ bb_fasta_stats() {
     info "Done."
 }
 
-bb_fastq_stats() {
-    if [[ $# -eq 0 ]]; then
-        echo "bb_fastq_stats"
-        echo "Generate basic statistics from a FASTQ file."
-        echo ""
-        echo "Usage:"
-        echo "  bb_fastq_stats --input FILE [--outfile FILE] [--quiet] [--force]"
-        echo ""
-        echo "Options:"
-        echo "  --input FILE      FASTQ file or '-' for STDIN (required)"
-        echo "  --outfile FILE    Output file (default: STDOUT)"
-        echo "  --quiet           Suppress messages"
-        echo "  --force           Overwrite output file if it exists"
-        return 0
-    fi
-
-    if ! declare -f parse_args >/dev/null; then
-        . ./biobash_core.sh
-    fi
-
-    parse_args "$@"
-
-    if [[ -z "$INPUT" ]]; then
-        error "Missing required --input argument"
-        return 1
-    fi
-
-    check_input "$INPUT"
-
-    local stdin_tmp=""
-    local DECOMP_CMD=""
-
-    # Detect and handle STDIN
-    if is_stdin "$INPUT"; then
-        stdin_tmp=$(mktemp)
-        cat - > "$stdin_tmp"
-        INPUT="$stdin_tmp"
-    fi
-
-    # Detect and decompress gzipped input
-    local DISPLAY_NAME="$INPUT"
-
-    # Detect and decompress gzipped input
-    if [[ "$INPUT" == *.gz ]]; then
-        detect_os
-        case "$OS_TYPE" in
-            macos)
-                if ! command -v gzcat &>/dev/null; then
-                    error "gzcat not found on macOS to handle .gz files"
-                    return 1
-                fi
-                DECOMP_CMD="gzcat"
-                ;;
-            linux)
-                if ! command -v zcat &>/dev/null; then
-                    error "zcat not found on Linux to handle .gz files"
-                    return 1
-                fi
-                DECOMP_CMD="zcat"
-                ;;
-            *)
-                error "Unsupported OS for compressed FASTQ handling"
-                return 1
-                ;;
-        esac
-        stdin_tmp=$(mktemp)
-        if ! $DECOMP_CMD "$INPUT" > "$stdin_tmp"; then
-            error "Failed to decompress input file: $INPUT"
-            rm -f "$stdin_tmp"
-            return 1
-        fi
-        INPUT="$stdin_tmp"
-    fi
-
-
-        local outstream="/dev/stdout"
-        if [[ -n "$OUTFILE" ]]; then
-            if ! check_file_exists "$OUTFILE"; then
-                [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
-                return 1
-            fi
-            mkdir -p "$(dirname "$OUTFILE")" 2>/dev/null || {
-                error "Cannot create directory for output: $(dirname "$OUTFILE")"
-                [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
-                return 1
-            }
-            outstream="$OUTFILE"
-        fi
-
-        info "Generating FASTQ stats from: $INPUT"
-        info "Output: ${OUTFILE:-STDOUT}"
-
-        LC_NUMERIC=C awk -v file="$DISPLAY_NAME" '
-            BEGIN {
-                count = 0
-                total_len = 0
-                min = 1e9
-                max = 0
-                total_qual = 0
-                qual_count = 0
-                q20 = 0
-                q30 = 0
-                s = " !\\\"#$%&'\''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
-            }
-            NR % 4 == 2 {
-                len = length($0)
-                total_len += len
-                if (len < min) min = len
-                if (len > max) max = len
-                count++
-            }
-            NR % 4 == 0 {
-                for (i = 1; i <= length($0); i++) {
-                    c = substr($0, i, 1)
-                    phred = index(s, c) - 1
-                    total_qual += phred
-                    qual_count++
-                    if (phred >= 20) q20++
-                    if (phred >= 30) q30++
-                }
-            }
-            END {
-                avg_len = (count > 0) ? total_len / count : 0
-                avg_qual = (qual_count > 0) ? total_qual / qual_count : 0
-                q20_pct = (qual_count > 0) ? 100 * q20 / qual_count : 0
-                q30_pct = (qual_count > 0) ? 100 * q30 / qual_count : 0
-
-                printf "#   File name      numseqs  sumlen   minlen   avg_len   maxlen   Q20(%%)   Q30(%%)\n"
-                printf "    %-15s %7d  %7d  %7d   %7.2f  %7d   %7.2f  %7.2f\n", file, count, total_len, min, avg_len, max, q20_pct, q30_pct
-            }
-        ' "$INPUT" > "$outstream"
-
-    [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
-    info "Done."
-}
 
 bb_guess_sequence_type() {
     if [[ $# -eq 0 ]]; then
@@ -1011,6 +876,275 @@ bb_guess_sequence_type() {
     [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
     info "Done."
 }
+
+#======
+bb_fastq_stats() {
+    if [[ $# -eq 0 ]]; then
+        echo "bb_fastq_stats"
+        echo "Generate basic statistics from a FASTQ file (supports random subsampling)."
+        echo ""
+        echo "Usage:"
+        echo "  bb_fastq_stats --input FILE [--outfile FILE] [--sample_size PCT] [--quiet] [--force]"
+        echo ""
+        echo "Options:"
+        echo "  --input FILE       FASTQ file or '-' for STDIN (required)"
+        echo "  --outfile FILE     Output file (default: STDOUT)"
+        echo "  --sample_size PCT  Percent of reads to sample randomly (default: 10)"
+        echo "  --quiet            Suppress informational messages"
+        echo "  --force            Overwrite output file if it exists"
+        return 0
+    fi
+
+    local SAMPLE_SIZE=10
+    local stdin_tmp=""
+    local args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --sample_size) SAMPLE_SIZE="$2"; shift 2 ;;
+            *) args+=("$1"); shift ;;
+        esac
+    done
+
+    if ! declare -f parse_args >/dev/null; then . ./biobash_core.sh; fi
+    parse_args "${args[@]}"
+    check_input "$INPUT"
+
+    if [[ "$SAMPLE_SIZE" -lt 1 || "$SAMPLE_SIZE" -gt 100 ]]; then
+        error "--sample_size must be a percentage between 1 and 100"
+        return 1
+    fi
+
+    local infile="$INPUT"
+    if is_stdin "$INPUT"; then
+        stdin_tmp=$(mktemp)
+        cat - > "$stdin_tmp"
+        infile="$stdin_tmp"
+    fi
+
+    local total_lines
+    total_lines=$(wc -l < "$infile")
+    local total_reads=$((total_lines / 4))
+    local sampled_reads=$((total_reads * SAMPLE_SIZE / 100))
+    [[ "$sampled_reads" -lt 1 ]] && sampled_reads=1
+
+    [[ "$QUIET" != "true" ]] && info "Total reads in file: $total_reads"
+    [[ "$QUIET" != "true" ]] && info "Sampling $sampled_reads reads (${SAMPLE_SIZE}%)"
+
+    local sampled_tmp
+    sampled_tmp=$(mktemp)
+
+    shuf -i 0-$((total_reads - 1)) -n "$sampled_reads" | sort -n | awk -v infile="$infile" '
+        BEGIN { getline_cmd = "cat " infile }
+        {
+            start = ($1 * 4) + 1
+            for (i = 0; i < 4; i++) lines[start + i] = 1
+        }
+        END {
+            close(getline_cmd)
+            while ((getline line < infile) > 0) {
+                line_num++
+                if (line_num in lines) print line
+            }
+        }
+    ' > "$sampled_tmp"
+
+    local outstream="/dev/stdout"
+    if [[ -n "$OUTFILE" ]]; then
+        if ! check_file_exists "$OUTFILE"; then
+            [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
+            rm -f "$sampled_tmp"
+            return 1
+        fi
+        mkdir -p "$(dirname "$OUTFILE")" 2>/dev/null || {
+            error "Cannot create output directory for: $(dirname "$OUTFILE")"
+            [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
+            rm -f "$sampled_tmp"
+            return 1
+        }
+        outstream="$OUTFILE"
+    fi
+
+    [[ "$QUIET" != "true" ]] && info "Generating FASTQ stats from sample..."
+
+    LC_NUMERIC=C awk -v file="$INPUT" -v total_reads="$total_reads" '
+        BEGIN {
+            count = 0
+            total_len = 0
+            min = 1e9
+            max = 0
+            total_qual = 0
+            qual_count = 0
+            q20 = 0
+            q30 = 0
+            s = " !\"#$%&'\''()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+        }
+        NR % 4 == 2 {
+            len = length($0)
+            total_len += len
+            if (len < min) min = len
+            if (len > max) max = len
+            count++
+        }
+        NR % 4 == 0 {
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                phred = index(s, c) - 1
+                total_qual += phred
+                qual_count++
+                if (phred >= 20) q20++
+                if (phred >= 30) q30++
+            }
+        }
+        END {
+            avg_len = (count > 0) ? total_len / count : 0
+            avg_qual = (qual_count > 0) ? total_qual / qual_count : 0
+            q20_pct = (qual_count > 0) ? 100 * q20 / qual_count : 0
+            q30_pct = (qual_count > 0) ? 100 * q30 / qual_count : 0
+
+            printf "#   File name      numseqs  sumlen   minlen   avg_len   maxlen   Q20(%%)   Q30(%%)\n"
+            printf "    %-15s", file
+            printf " %7d", total_reads
+            printf "  %7d", total_len
+            printf "  %7d", min
+            printf "   %7.2f", avg_len
+            printf "  %7d", max
+            printf "   %7.2f", q20_pct
+            printf "  %7.2f\n", q30_pct
+}
+
+    ' "$sampled_tmp" > "$outstream"
+
+    [[ "$QUIET" != "true" ]] && info "Done."
+
+    rm -f "$sampled_tmp"
+    [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
+}
+
+
+#====
+bb_fastq_subsampling() {
+    if [[ $# -eq 0 ]]; then
+        echo "bb_fastq_subsampling"
+        echo "Randomly subsample a percentage of sequences from a FASTQ file."
+        echo ""
+        echo "Usage:"
+        echo "  bb_fastq_subsampling --input FILE [--sample_size PCT] [--outfile FILE] [--quiet] [--force]"
+        echo ""
+        echo "Options:"
+        echo "  --input FILE       FASTQ file or '-' for STDIN (required)"
+        echo "  --sample_size PCT  Percentage of reads to subsample (1–100, default: 10)"
+        echo "  --outfile FILE     Output FASTQ file (default: STDOUT)"
+        echo "  --quiet            Suppress informational messages"
+        echo "  --force            Overwrite output file if it exists"
+        return 0
+    fi
+
+    if ! declare -f parse_args >/dev/null; then . ./biobash_core.sh; fi
+
+    local SAMPLE_SIZE=10
+    local args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --sample_size) SAMPLE_SIZE="$2"; shift 2 ;;
+            *) args+=("$1"); shift ;;
+        esac
+    done
+
+    if [[ "$SAMPLE_SIZE" -lt 1 || "$SAMPLE_SIZE" -gt 100 ]]; then
+        error "--sample_size must be a percentage between 1 and 100"
+        return 1
+    fi
+
+    parse_args "${args[@]}"
+    check_input "$INPUT"
+
+    local stdin_tmp=""
+    local DECOMP_CMD=""
+    local infile="$INPUT"
+
+    # Descomprimir si viene de .gz
+    if [[ "$INPUT" == *.gz ]]; then
+        detect_os
+        case "$OS_TYPE" in
+            macos)
+                if ! command -v gzcat &>/dev/null; then
+                    error "gzcat not found on macOS to handle .gz files"
+                    return 1
+                fi
+                DECOMP_CMD="gzcat"
+                ;;
+            linux)
+                if ! command -v zcat &>/dev/null; then
+                    error "zcat not found on Linux to handle .gz files"
+                    return 1
+                fi
+                DECOMP_CMD="zcat"
+                ;;
+            *)
+                error "Unsupported OS for compressed FASTQ handling"
+                return 1
+                ;;
+        esac
+
+        stdin_tmp=$(mktemp)
+        if ! $DECOMP_CMD "$INPUT" > "$stdin_tmp"; then
+            error "Failed to decompress input file: $INPUT"
+            rm -f "$stdin_tmp"
+            return 1
+        fi
+        infile="$stdin_tmp"
+    elif is_stdin "$INPUT"; then
+        stdin_tmp=$(mktemp)
+        cat - > "$stdin_tmp"
+        infile="$stdin_tmp"
+    fi
+
+    local total_lines
+    total_lines=$(wc -l < "$infile")
+    local total_reads=$((total_lines / 4))
+    local sampled_reads=$((total_reads * SAMPLE_SIZE / 100))
+    [[ "$sampled_reads" -lt 1 ]] && sampled_reads=1
+
+    [[ "$QUIET" != "true" ]] && info "Total reads: $total_reads"
+    [[ "$QUIET" != "true" ]] && info "Sampling $sampled_reads reads (${SAMPLE_SIZE}%)"
+
+    local outstream="/dev/stdout"
+    if [[ -n "$OUTFILE" ]]; then
+        if ! check_file_exists "$OUTFILE"; then
+            [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
+            return 1
+        fi
+        mkdir -p "$(dirname "$OUTFILE")" 2>/dev/null || {
+            error "Cannot create output directory: $(dirname "$OUTFILE")"
+            [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
+            return 1
+        }
+        outstream="$OUTFILE"
+    fi
+
+    local sampled_tmp
+    sampled_tmp=$(mktemp)
+
+    shuf -i 0-$((total_reads - 1)) -n "$sampled_reads" | sort -n | awk -v infile="$infile" '
+        {
+            start = ($1 * 4) + 1
+            for (i = 0; i < 4; i++) lines[start + i] = 1
+        }
+        END {
+            while ((getline line < infile) > 0) {
+                line_num++
+                if (line_num in lines) print line
+            }
+        }
+    ' > "$sampled_tmp"
+
+    cat "$sampled_tmp" > "$outstream"
+    rm -f "$sampled_tmp"
+    [[ -n "$stdin_tmp" ]] && rm -f "$stdin_tmp"
+    [[ "$QUIET" != "true" ]] && info "Subsample written to: ${OUTFILE:-STDOUT}"
+}
+
 
 
 
