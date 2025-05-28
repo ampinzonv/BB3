@@ -596,3 +596,123 @@ bb_blast_on_the_fly() {
     rm -rf "$TMPDIR"
     info "Temporary files cleaned up"
 }
+
+bb_reciprocal_blast() {
+    if [[ $# -eq 0 ]]; then
+        echo "bb_reciprocal_blast"
+        echo "Run reciprocal BLAST to identify orthologous hits between two FASTA datasets."
+        echo ""
+        echo "Usage:"
+        echo "  bb_reciprocal_blast --query FILE --subject FILE --blast_type TYPE [--outfile PREFIX] [--min_identity PCT] [--min_coverage PCT] [--processors N] [--quiet] [--force]"
+        echo ""
+        echo "Options:"
+        echo "  --query FILE         Query FASTA file (required)"
+        echo "  --subject FILE       Subject FASTA file (required)"
+        echo "  --blast_type TYPE    BLAST algorithm to use (e.g., blastn, blastp, etc.) (required)"
+        echo "  --outfile PREFIX     Prefix for output files (default: based on query filename)"
+        echo "  --min_identity PCT   Minimum percent identity (default: 0)"
+        echo "  --min_coverage PCT   Minimum query coverage (default: 0)"
+        echo "  --processors N       Number of processors for BLAST (default: 1)"
+        echo "  --quiet              Suppress informational messages"
+        echo "  --force              Overwrite output files if they exist"
+        return 0
+    fi
+
+    if ! declare -f parse_args >/dev/null; then . ./biobash_core.sh; fi
+    if ! declare -f bb_blast_on_the_fly >/dev/null; then . ./blast.sh; fi
+
+    local QUERY=""
+    local SUBJECT=""
+    local BLAST_TYPE=""
+    local MIN_IDENTITY=0
+    local MIN_COVERAGE=0
+    local OUT_PREFIX=""
+    local args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --query) QUERY="$2"; shift 2 ;;
+            --subject) SUBJECT="$2"; shift 2 ;;
+            --blast_type) BLAST_TYPE="$2"; shift 2 ;;
+            --min_identity) MIN_IDENTITY="$2"; shift 2 ;;
+            --min_coverage) MIN_COVERAGE="$2"; shift 2 ;;
+            --outfile) OUT_PREFIX="$2"; shift 2 ;;
+            *) args+=("$1"); shift ;;
+        esac
+    done
+
+    parse_args "${args[@]}"
+
+    if [[ -z "$QUERY" || -z "$SUBJECT" || -z "$BLAST_TYPE" ]]; then
+        error "Missing required arguments: --query, --subject, or --blast_type"
+        return 1
+    fi
+
+    check_input "$QUERY" || return 1
+    check_input "$SUBJECT" || return 1
+
+    local BASENAME_Q BASENAME_S
+    BASENAME_Q=$(get_basename "$QUERY")
+    BASENAME_S=$(get_basename "$SUBJECT")
+    local PREFIX="${OUT_PREFIX:-${BASENAME_Q}_${BASENAME_S}}"
+
+    local FILE_A_VS_B="${PREFIX}.A_vs_B.blast"
+    local FILE_B_VS_A="${PREFIX}.B_vs_A.blast"
+    local FILE_RECIP="${PREFIX}.reciprocal.tsv"
+
+    for f in "$FILE_A_VS_B" "$FILE_B_VS_A" "$FILE_RECIP"; do
+        if ! check_file_exists "$f"; then return 1; fi
+    done
+
+    local TMPDIR
+    TMPDIR=$(mktemp -d)
+    [[ ! -d "$TMPDIR" ]] && { error "Failed to create temporary directory"; return 1; }
+
+    info "Running A vs B BLAST..."
+    local args_A=(--query "$QUERY" --db "$SUBJECT" --blast_type "$BLAST_TYPE" --outfile "$FILE_A_VS_B" --processors "$PROCESSORS")
+    [[ "$QUIET" == "true" ]] && args_A+=("--quiet")
+    [[ "$FORCE" == "true" ]] && args_A+=("--force")
+    bb_blast_on_the_fly "${args_A[@]}" || { rm -rf "$TMPDIR"; return 1; }
+
+    info "Running B vs A BLAST..."
+    local args_B=(--query "$SUBJECT" --db "$QUERY" --blast_type "$BLAST_TYPE" --outfile "$FILE_B_VS_A" --processors "$PROCESSORS")
+    [[ "$QUIET" == "true" ]] && args_B+=("--quiet")
+    [[ "$FORCE" == "true" ]] && args_B+=("--force")
+    bb_blast_on_the_fly "${args_B[@]}" || { rm -rf "$TMPDIR"; return 1; }
+
+    local A_BEST="$TMPDIR/A_best.tsv"
+    local B_BEST="$TMPDIR/B_best.tsv"
+    bb_blast_best_hit --input "$FILE_A_VS_B" --outfile "$A_BEST" --quiet --force= || return 1
+    bb_blast_best_hit --input "$FILE_B_VS_A" --outfile "$B_BEST" --quiet --force= || return 1
+
+    info "Computing reciprocal best hits..."
+    awk -v id="$MIN_IDENTITY" -v cov="$MIN_COVERAGE" '
+        BEGIN { FS=OFS="\t" }
+        FNR==NR {
+            aln_len = ($8 > $7) ? $8 - $7 + 1 : $7 - $8 + 1
+            cov_pct = ($13 > 0) ? (100 * aln_len / $13) : 0
+            if ($3 >= id && cov_pct >= cov) best[$1] = $2
+            next
+        }
+        {
+            aln_len = ($8 > $7) ? $8 - $7 + 1 : $7 - $8 + 1
+            cov_pct = ($13 > 0) ? (100 * aln_len / $13) : 0
+            if ($3 >= id && cov_pct >= cov) {
+                if (best[$2] == $1) print $1, $2
+            }
+        }
+    ' "$A_BEST" "$B_BEST" > "$FILE_RECIP"
+
+    info "Reciprocal BLAST complete."
+    info "Output files:"
+    info "  A vs B: $FILE_A_VS_B"
+    info "  B vs A: $FILE_B_VS_A"
+    info "  Reciprocal hits: $FILE_RECIP"
+
+    rm -rf "$TMPDIR"
+    return 0
+}
+
+
+
+

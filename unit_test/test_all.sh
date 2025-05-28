@@ -21,6 +21,8 @@ test_files=(
     test_bb_run_blast.sh
     test_bb_blast_summary.sh
     test_bb_blast_on_the_fly.sh
+    test_bb_blast_reciprocal.sh
+    
 )
 
 for test in "${test_files[@]}"; do

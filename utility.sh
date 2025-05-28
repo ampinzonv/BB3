@@ -2,7 +2,7 @@
 
 # Ensure biobash_core.sh is loaded (only once)
 if ! declare -f parse_args >/dev/null; then
-    . ../biobash_core.sh
+    . ./biobash_core.sh
 fi
 
 bb_get_list() {
