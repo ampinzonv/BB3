@@ -9,11 +9,16 @@ bb_get_list() {
     if [[ $# -eq 0 ]]; then
         echo "bb_get_list"
         echo "Processes a list of items (one per line) and returns:"
-        echo "- a sorted non-redundant list (default)"
-        echo "- or item frequency and percentage with --frequency"
         echo ""
         echo "Usage:"
         echo "  bb_get_list --input FILE [--outfile FILE] [--frequency] [--quiet] [--force]"
+        echo ""
+        echo "Options:"
+        echo "  --input FILE      Input FASTA file or '-' for STDIN (required)"
+        echo "  --outfile FILE    Output file (optional; default: STDOUT)"
+        echo "  --quiet           Suppress log messages"
+        echo "  --force           Overwrite output file if it exists"
+        
         return 0
     fi
 
