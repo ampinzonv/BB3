@@ -9,11 +9,13 @@
 # Institute for Genetics - National University of Colombia
 #
 
-#BIOBASH_HOME is declared and exported in .bashrc/.bash_profile before this script is called.
-source "${BIOBASH_HOME}/biobash_core.sh"
+#This variable will be declared here just for development.
+BIOBASH_HOME="$(pwd)"
+export BIOBASH_HOME
+
 source "${BIOBASH_HOME}/file.sh"
 source "${BIOBASH_HOME}/plot_ascii.sh"
 source "${BIOBASH_HOME}/blast.sh"
 source "${BIOBASH_HOME}/utility.sh"
-
+source "${BIOBASH_HOME}/biobash_core.sh"
 

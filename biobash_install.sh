@@ -2,7 +2,7 @@
 
 # ---------------------- CONFIGURATION ----------------------
 
-BIOBASH_FILES=("biobash_core.sh" "blast.sh" "file.sh" "load_biobash.sh" "plot_ascii.sh" "test_biobash_core.sh" "utility.sh")
+BIOBASH_FILES=("biobash_core.sh" "blast.sh" "file.sh" "load_biobash.sh" "plot_ascii.sh" "test_biobash_core.sh" "utility.sh" "biobash_uninstall.sh")
 INSTALLER_NAME="BioBASH Installer"
 
 # ---------------------- FUNCTIONS --------------------------
@@ -28,6 +28,11 @@ function check_dependencies() {
         if ! command -v "$cmd" &>/dev/null; then
             echo "Error: Required command '$cmd' not found. Please install it before proceeding."
             exit 1
+        else
+            echo "Checking $cmd "
+            sleep 0.5
+            echo -e "\033[1;32mOK\033[0m"
+        
         fi
     done
     echo "All dependencies are satisfied."
@@ -97,6 +102,7 @@ function update_bashrc() {
         touch "$bash_file"
     fi
 
+    # Once here means that we are working with a correct bash file
     if ! grep -q "source \$BIOBASH_HOME/load_biobash.sh" "$bash_file"; then
         {
             echo ""
@@ -112,14 +118,42 @@ function update_bashrc() {
 # ---------------------- MAIN -------------------------------
 
 print_header
+
+echo ""
+echo "STEP 1. Checking environment..."
+
 check_shell
 check_dependencies
 read_version
+sleep 0.5
+
+echo""
+echo "STEP 2. Confirming installation and installation directory"
+
 confirm_install
 get_install_dir
 check_permissions
-install_files
-update_bashrc
+sleep 0.4
 
-echo -e "\n\033[1;32mBioBASH installed successfully!\033[0m Please restart your terminal or run:"
-echo "source ~/.bashrc" # or .bash_profile based on system
+echo ""
+echo "STEP 3. Installing BioBASH files"
+install_files
+sleep 0.4
+
+echo""
+echo "STEP 4. Updating bash configuration file"
+update_bashrc
+sleep 0.4
+
+
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+        bash_file="$HOME/.bash_profile"
+else
+        bash_file="$HOME/.bashrc"
+fi
+
+echo ""
+echo -e "\n\033[1;32mBioBASH installed successfully!\033[0m Please RESTART your terminal or run:"
+echo "source ${bash_file}" 
+echo""
