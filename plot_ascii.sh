@@ -229,6 +229,8 @@ bb_plot_histogram_txt() {
 
 
 bb_plot_quality_distribution() {
+    echo "DEBUG MODE: bb_plot_quality_distribution"
+    echo "-----------------------------------------"
     if [[ $# -eq 0 ]]; then
         echo "bb_plot_quality_distribution"
         echo "Plot ASCII histogram of average quality per read from a FASTQ file."
@@ -248,9 +250,12 @@ bb_plot_quality_distribution() {
 
     if ! declare -f parse_args >/dev/null; then . ./biobash_core.sh; fi
 
-    local SAMPLE_SIZE=""
+    
+    local SAMPLE_SIZE="10"
     local PHRED_OFFSET="33"
     local args=()
+
+    # Parse custom arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --sample_size) SAMPLE_SIZE="$2"; shift 2 ;;
@@ -265,7 +270,10 @@ bb_plot_quality_distribution() {
     local temp_input=""
     local infile="$INPUT"
 
-    if [[ -n "$SAMPLE_SIZE" ]]; then
+    #If sample size is not empty, subsample the input
+    [[ "$QUIET" != "true" ]] && info "Using sample size: $SAMPLE_SIZE%"
+
+    if [[ -v "$SAMPLE_SIZE" ]]; then
         temp_input=$(mktemp)
         bb_fastq_subsampling --input "$INPUT" --sample_size "$SAMPLE_SIZE" --outfile "$temp_input" --force ${QUIET:+--quiet}
         if [[ $? -ne 0 || ! -s "$temp_input" ]]; then
