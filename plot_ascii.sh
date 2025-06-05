@@ -229,8 +229,7 @@ bb_plot_histogram_txt() {
 
 
 bb_plot_quality_distribution() {
-    echo "DEBUG MODE: bb_plot_quality_distribution"
-    echo "-----------------------------------------"
+
     if [[ $# -eq 0 ]]; then
         echo "bb_plot_quality_distribution"
         echo "Plot ASCII histogram of average quality per read from a FASTQ file."
