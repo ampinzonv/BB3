@@ -6,7 +6,6 @@
 # =========================================
 
 INSTALLER_NAME="BioBASH Uninstaller"
-BIOBASH_PATTERN="source \$BIOBASH_HOME/load_biobash.sh"
 
 function print_header() {
     echo -e "\033[1;31m$INSTALLER_NAME\033[0m"
@@ -14,68 +13,72 @@ function print_header() {
     echo
 }
 
-function detect_bash_file() {
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "$HOME/.bash_profile"
-    else
-        echo "$HOME/.bashrc"
-    fi
+function detect_profiles() {
+    local profiles=()
+    [[ -f "$HOME/.bashrc" ]] && profiles+=("$HOME/.bashrc")
+    [[ -f "$HOME/.bash_profile" ]] && profiles+=("$HOME/.bash_profile")
+    [[ -f "$HOME/.zshrc" ]] && profiles+=("$HOME/.zshrc")
+    [[ -f "$HOME/.profile" ]] && profiles+=("$HOME/.profile")
+    
+    # Return unique items
+    echo "${profiles[@]}" | tr ' ' '\n' | sort -u
 }
 
-function remove_bashrc_entry() {
-    local bash_file
-    bash_file=$(detect_bash_file)
+function remove_profile_entries() {
+    local profiles
+    read -a profiles <<< "$(detect_profiles)"
 
-    if [[ ! -f "$bash_file" ]]; then
-        echo "[WARN] No bash configuration file found."
-        return
-    fi
+    for profile_file in "${profiles[@]}"; do
+        if grep -q "BioBASH" "$profile_file" 2>/dev/null; then
+            echo "[INFO] Removing BioBASH environment entries from $profile_file"
+            cp "$profile_file" "${profile_file}.bak"
 
-    echo "[INFO] Removing BioBASH environment entries from $bash_file"
-    cp "$bash_file" "${bash_file}.bak"
+            local temp_file
+            temp_file=$(mktemp)
+            
+            # Remove any line between # BioBASH and export PATH, etc.
+            # Using grep -v with a pattern matches the exact lines our installer added
+            grep -v "# BioBASH integration" "$profile_file" | 
+            grep -v "# BioBASH PATH integration" | 
+            grep -v "source \$BIOBASH_HOME/load_biobash.sh" | 
+            grep -v 'export BIOBASH_HOME=' | 
+            grep -v 'export PATH="\$BIOBASH_HOME:\$PATH"' |
+            grep -v 'export PATH="\$PATH:\$BIOBASH_HOME"' > "$temp_file"
+            
+            mv "$temp_file" "$profile_file"
+            echo "[INFO] Cleaned up $profile_file"
+        fi
+    done
+}
 
-    # Crear archivo temporal para hacer el trabajo
-    local temp_file
-    temp_file=$(mktemp)
-    
-    # Filtrar las líneas que queremos eliminar
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS - usamos grep inverso para eliminar líneas
-        grep -v "# BioBASH integration" "$bash_file" | 
-        grep -v "source \$BIOBASH_HOME/load_biobash.sh" | 
-        grep -v "export BIOBASH_HOME=" > "$temp_file"
+function get_installed_location() {
+    local location=""
+    if [[ -n "$BIOBASH_HOME" ]]; then
+        location="$BIOBASH_HOME"
     else
-        # Linux - podemos usar sed normalmente
-        sed '/# BioBASH integration/d' "$bash_file" |
-        sed '/source \$BIOBASH_HOME\/load_biobash.sh/d' |
-        sed '/export BIOBASH_HOME=/d' > "$temp_file"
+        # Try to find it if BIOBASH_HOME is not set but they run uninstaller
+        # Assume it's in the same directory as the uninstaller script
+        location="$(dirname "$(realpath "$0")")"
     fi
-    
-    # Reemplazar el archivo original con el filtrado
-    mv "$temp_file" "$bash_file"
-    
-    echo "[INFO] BioBASH environment variables removed from $bash_file"
+    echo "$location"
 }
 
 function remove_installation() {
-    if [[ -z "$BIOBASH_HOME" ]]; then
-        echo "[ERROR] BIOBASH_HOME environment variable is not set. Cannot determine installation path."
+    local target_dir
+    target_dir=$(get_installed_location)
+
+    if [[ ! -d "$target_dir" ]]; then
+        echo "[ERROR] Directory $target_dir does not exist or has already been removed."
         exit 1
     fi
 
-    if [[ ! -d "$BIOBASH_HOME" ]]; then
-        echo "[ERROR] Directory $BIOBASH_HOME does not exist."
-        exit 1
-    fi
-
-    echo "[INFO] BioBASH is installed in: $BIOBASH_HOME"
-    read -p "Are you sure you want to permanently delete BIOBASHH installation directory? [y/N] " confirm
+    echo "[INFO] BioBASH installation detected in: $target_dir"
+    read -p "Are you sure you want to permanently delete this BIOBASH installation directory? [y/N] " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        rm -rf "$BIOBASH_HOME"
-        echo "[INFO] Deleted BioBASH directory: $BIOBASH_HOME"
-        echo -e "\n\033[1;32mBioBASH was successfully uninstalled.\033[0m Please restart your terminal or run:"
-    echo "source ~/.bashrc   # or ~/.bash_profile on macOS"
-  
+        rm -rf "$target_dir"
+        echo "[INFO] Deleted BioBASH directory: $target_dir"
+        echo -e "\n\033[1;32mBioBASH was successfully uninstalled.\033[0m"
+        echo "Please restart your terminal to fully clear any loaded paths."
     else
         echo "[INFO] Aborted. BioBASH directory was not removed."
     fi
@@ -84,9 +87,7 @@ function remove_installation() {
 # ---------------------- MAIN -------------------------------
 
 print_header
-remove_bashrc_entry
+remove_profile_entries
 remove_installation
-  echo ""
-    echo ""
-
+echo ""
 

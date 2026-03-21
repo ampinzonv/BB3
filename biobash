@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+
+# BioBash Dispatcher Script
+# Usage: biobash <subcommand> [args...]
+
+BB_HOME="$(dirname "$(realpath "$0")")"
+export BIOBASH_HOME="$BB_HOME"
+
+# Print usage if no arguments provided
+if [[ $# -eq 0 ]]; then
+    echo "🧬 BioBash (BB3) - Bioinformatics Bash Library"
+    echo ""
+    echo "Usage: biobash <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  -- File / Sequence Operations --"
+    echo "  get_fasta_header          Extract FASTA headers"
+    echo "  get_fasta_id              Extract sequence IDs from FASTA headers"
+    echo "  get_fasta_seq             Extract only sequence lines from a FASTA file"
+    echo "  get_fasta_length          Report sequence lengths from a FASTA file"
+    echo "  get_fasta_entry           Extract one or multiple entries from a FASTA file by ID"
+    echo "  get_fasta_range           Extract a subsequence range from a FASTA entry"
+    echo "  split_multiple_fasta      Split a multi-FASTA file into individual files"
+    echo "  guess_sequence_type       Guess whether a FASTA contains DNA, RNA or Protein"
+    echo "  fastq_to_fasta            Convert a FASTQ file to FASTA format"
+    echo "  fasta_stats               Generate basic FASTA statistics including N50"
+    echo "  fastq_stats               Generate FASTQ statistics"
+    echo "  fastq_subsampling         Subsample reads from a FASTQ file"
+    echo ""
+    echo "  -- BLAST Operations --"
+    echo "  create_blast_db           Create a BLAST database from a FASTA file"
+    echo "  run_blast                 Run a BLAST search"
+    echo "  blast_best_hit            Extract the best BLAST hit per (qseqid, sseqid) pair"
+    echo "  blast_summary             Generate summary statistics from a BLAST tabular file"
+    echo "  blast_on_the_fly          Run a temporary BLAST search with automatic DB creation"
+    echo "  reciprocal_blast          Run reciprocal BLAST to identify orthologous hits"
+    echo ""
+    echo "  -- Plotting / Visualization --"
+    echo "  plot_blast_hits_txt       Visualize BLAST HSP alignments as scaled bars"
+    echo "  plot_histogram_txt        Draw a horizontal histogram using two-column input"
+    echo "  plot_quality_distribution Plot ASCII histogram of average quality per read"
+    echo "  plot_quality_per_base     Plot ASCII histogram of quality per base position"
+    echo ""
+    echo "  -- Utilities --"
+    echo "  get_list                  Process a list of items and return unique/freqs"
+    echo "  project_setup             Set up a directory structure for a new project"
+    echo ""
+    echo "Use 'biobash <command> --help' for specific command instructions."
+    exit 0
+fi
+
+COMMAND="$1"
+shift
+
+# Load ALL modules to resolve inter-dependencies implicitly
+source "${BB_HOME}/biobash_core.sh"
+source "${BB_HOME}/file.sh"
+source "${BB_HOME}/blast.sh"
+source "${BB_HOME}/plot_ascii.sh"
+source "${BB_HOME}/utility.sh"
+
+# Validate if requested command exists
+if declare -f "bb_${COMMAND}" >/dev/null; then
+    "bb_${COMMAND}" "$@"
+else
+    error "Unknown command: $COMMAND"
+    echo "Run 'biobash' without arguments to see the available commands."
+    exit 1
+fi
